@@ -477,9 +477,9 @@ class AWS:
 			#see if api exists already
 			rest_api_list = AWS.APIGateway.List(apig)
 
-			active_api = next((x for x in rest_api_list if x['name'] == api_name), None)
+			active_apis = [x for x in rest_api_list if x['name'] == api_name]
 
-			if active_api is None: #not already an active api
+			if len(active_apis) <= 0: #not already an active api
 				return apig.client.create_rest_api(
 					name=api_name,
 					description=purpose,
@@ -487,9 +487,9 @@ class AWS:
 					endpointConfiguration={'types': [rest_type]})
 			else: #already exists
 				if overwrite: #overwrite through update
-					return AWS.APIGateway.Update(apig,active_api['id'],purpose,rest_type,apikeysource)
+					return AWS.APIGateway.Update(apig,active_apis[0]['id'],purpose,rest_type,apikeysource)
 				else:
-					return active_api
+					return active_apis[0]
 
 		def Update(apig,api_id: str,purpose: str,rest_type: str,apikeysource: str):
 			"""Update an API.
@@ -540,7 +540,7 @@ class AWS:
 			api_id = AWS.APIGateway.GetId(apig,api_name)
 			return apig.client.delete_rest_api(restApiId=api_id)
 
-		def Deploy(apig,api_id: str,stage_name: str,stage_purpose: str,deployment_purpose: str,):
+		def Deploy(apig,api_id: str,stage_name: str,stage_purpose: str,deployment_purpose: str):
 			"""Stage a deployment of an API.
 			Args:
 				apig (APIGateway): Instantiated APIGateway credential access object.
@@ -573,6 +573,39 @@ class AWS:
 			)
 			return response
 
+		def Create_Stage(apig,api_id: str,deployment_id: str,stage_name: str,stage_purpose: str):
+			"""Create a stage for a deployed API.
+			Args:
+				apig (APIGateway): Instantiated APIGateway credential access object.
+				api_id (str): API specified by Id.
+				deployment_id (str): Deployment specified by Id.
+				stage_name (str): Name of this deployment stage.
+				stage_purpose (str): Why this deployment stage is created.
+
+			"""
+			#TODO:  why does deployment also need the stagename?
+
+			stages_response = apig.client.get_stages(
+				restApiId=api_id,
+				deploymentId=deployment_id
+			)['item']
+
+			stages = [x for x in stages_response if x['stageName'] == stage_name]
+
+			#if stage already exists, return it
+			if len(stages) <= 0:
+
+				response = apig.client.create_stage(
+						restApiId=api_id,
+						stageName=stage_name,
+						deploymentId=deployment_id,
+						description=stage_purpose,
+					)
+			else:
+				response = stages[0]
+
+			return response
+
 		class Resource:
 			"""Sub class for managing a APIGateway Resource.
 			"""
@@ -600,8 +633,8 @@ class AWS:
 					dict: resposne from server.
 				TODO: 
 					Return rest api id from list so dont have to call list twice (its called in resource list too)
+					What about CORs?
 				"""
-				
 
 				#get rest api id from name
 				api_id = AWS.APIGateway.GetId(apig,api_name)
@@ -650,7 +683,7 @@ class AWS:
 			"""Sub class for managing Methods for REST Api Resources.
 			"""
 
-			def Get(apig,api_name: str, resource_name: str,http_method: str,parent_name='/'):
+			def Get(apig,api_name: str,resource_name: str,http_method: str,parent_name='/'):
 				"""Gets a Resource Method.
 				Args:
 					apig (APIGateway): Instantiated APIGateway credential access object.
@@ -682,7 +715,7 @@ class AWS:
 
 				return response
 
-			def Create(apig,api_name: str, resource_name: str,http_method: str,parent_name='/',key_req=True,authorizationtype='NONE',req_model={'application/json':'Empty'}):
+			def Create(apig,api_name: str,resource_name: str,http_method: str,parent_name='/',key_req=True,authorizationtype='NONE',req_model={'application/json':'Empty'}):
 				"""Creates a Resource Method.
 				Args:
 					apig (APIGateway): Instantiated APIGateway credential access object.
@@ -729,63 +762,161 @@ class AWS:
 					apiKeyRequired=key_req,
 					requestModels=req_model)
 
-			def Add_Integration(apig,api_name: str, resource_id: str,http_method: str, lambda_arn: str):
+			def Add_Integration(apig,api_name: str,resource_id: str,http_method: str,lambda_arn: str,integration_type='AWS',enable_CORs=True):
 				"""Adds an Lambda Function Integration to a Resource Method.
 				Args:
 					apig (APIGateway): Instantiated APIGateway credential access object.
 					api_name (str): API specified by name.
 					resource_id (str): Resource Id.
 					http_method (str): 'GET'|'POST'|'PUT'|'PATCH'|'DELETE'|'HEAD'|'OPTIONS'|'ANY'
-					lambda_arn (str): FunctionArn.
+					lambda_arn (str): ARN of the lambda function
+					integration_type (str): 'HTTP'|'AWS'|'MOCK'|'HTTP_PROXY'|'AWS_PROXY'
+					enable_CORs (bool): Default True enables CORs so lambda functions may be invoked AND x-api-key headers accepted for auth
 				Returns:
 					dict: server respnse
 				Ref:
 					http://boto3.readthedocs.io/en/latest/reference/services/apigateway.html#APIGateway.Client.put_integration
 					https://github.com/boto/boto3/issues/572
+					https://stackoverflow.com/questions/38052953/automating-cors-using-boto3-for-aws-api-gateway
+				Notes:
+					Enabling CORs is required to use API for invoking lambda function. 
 				"""
 
-				#arn:aws:apigateway:{aws-region}:lambda:path/2015-03-31/functions/arn:aws:lambda:{aws-region}:{aws-acct-id}:function:{your-lambda-function-name}/invocations
-
+				#get the id of the api by name
 				api_id = AWS.APIGateway.GetId(apig,api_name)
 
-				integration_type = 'AWS'
-				version = apig.client.meta.service_model.api_version
+				#get the version to use for the method integration
+				#version = apig.client.meta.service_model.api_version
+				version = '2015-03-31' #latest 2015-07-09 failed to properly invoke lambda
 
-				#TODO: remove $LATEST? lambda_arn = ':'.join(lambda_arn.split(':')[:-1])
+				#remove the latest alias funciton tag
+				#TODO: why? - didnt work otherwise
+				lambda_arn = lambda_arn.replace(':$LATEST','')
+				
+				#build the lambda uri
+				uri = 'arn:aws:apigateway:' + apig.region + ':lambda:path/' + version + '/functions/' + lambda_arn + '/invocations'
+				#uri arn:aws:apigateway:$REGION:lambda:path/2015-03-31/functions/arn:aws:lambda:$REGION:$ACCOUNT:function:LambdaFunctionOverHttps/invocations
 
-				uri = 'arn:aws:apigateway:' + apig.region + \
-					':lambda:path/' + version + '/functions/' + lambda_arn + '/invocations'
-
-				add_response = apig.client.put_integration(
-					restApiId=api_id,
-					resourceId=resource_id,
-					httpMethod=http_method,
-					integrationHttpMethod=http_method,
-					uri=uri,
-					type=integration_type)
-
+				if enable_CORs:
 					
-				resp_response = apig.client.put_integration_response(
-					restApiId=api_id,
-					resourceId=resource_id,
-					httpMethod=http_method,
-					statusCode='200',
-					selectionPattern=''
-				)
+					#add integration
+					add_response = apig.client.put_integration(
+						restApiId=api_id,
+						resourceId=resource_id,
+						httpMethod=http_method,
+						integrationHttpMethod='POST',#http_method, #must change to POST as this is how lambda functions are invoked?
+						uri=uri,
+						type=integration_type)
 
-				# create POST method response
-				try:
+					#add the method response
 					method_response = apig.client.put_method_response(
 						restApiId=api_id,
 						resourceId=resource_id,
 						httpMethod=http_method,
 						statusCode='200',
+						responseParameters={
+							'method.response.header.Access-Control-Allow-Origin': False
+						},
 						responseModels={
-							'application/json': 'Empty' #TODO: make like in console
+							'application/json': 'Empty'
 						})
-				except:
-					a = 5
-					#TODO: update because http_method could change?
+
+					#add the integration response
+					integration_response = apig.client.put_integration_response(
+						restApiId=api_id,
+						resourceId=resource_id,
+						httpMethod=http_method,
+						statusCode='200',
+						responseParameters={
+							'method.response.header.Access-Control-Allow-Origin': '\'*\''
+						},
+						responseTemplates={
+							'application/json': ''
+						}
+					)
+
+					#add an OPTION method
+					option_response = apig.client.put_method(
+						restApiId=api_id,
+						resourceId=resource_id,
+						httpMethod='OPTIONS',
+						authorizationType='NONE'
+					)
+
+					# Set the put integration of the OPTIONS method
+					opt_int_response = apig.client.put_integration(
+						restApiId=api_id,
+						resourceId=resource_id,
+						httpMethod='OPTIONS',
+						type='MOCK',
+						requestTemplates={
+							'application/json': '{"statusCode": 200}'
+						}
+					)
+
+					# Set the put method response of the OPTIONS method
+					opt_resp_response = apig.client.put_method_response(
+						restApiId=api_id,
+						resourceId=resource_id,
+						httpMethod='OPTIONS',
+						statusCode='200',
+						responseParameters={
+							'method.response.header.Access-Control-Allow-Headers': False,
+							'method.response.header.Access-Control-Allow-Origin': False,
+							'method.response.header.Access-Control-Allow-Methods': False
+						},
+						responseModels={
+							'application/json': 'Empty'
+						}
+					)
+
+					# Set the put integration response of the OPTIONS method
+					opt_int_resp_response = apig.client.put_integration_response(
+						restApiId=api_id,
+						resourceId=resource_id,
+						httpMethod='OPTIONS',
+						statusCode='200',
+						responseParameters={
+							'method.response.header.Access-Control-Allow-Headers': '\'Content-Type,X-Amz-Date,Authorization,X-Api-Key,x-api-key,X-Amz-Security-Token\'',
+							'method.response.header.Access-Control-Allow-Methods': '\'' + http_method + ',OPTIONS\'',
+							'method.response.header.Access-Control-Allow-Origin': '\'*\''
+						},
+						responseTemplates={
+							'application/json': ''
+						}
+					)
+
+				else:
+
+					add_response = apig.client.put_integration(
+						restApiId=api_id,
+						resourceId=resource_id,
+						httpMethod=http_method,
+						integrationHttpMethod=http_method,
+						uri=uri,
+						type=integration_type)
+
+					resp_response = apig.client.put_integration_response(
+						restApiId=api_id,
+						resourceId=resource_id,
+						httpMethod=http_method,
+						statusCode='200',
+						selectionPattern=''
+					)
+
+					# create POST method response
+					try:
+						method_response = apig.client.put_method_response(
+							restApiId=api_id,
+							resourceId=resource_id,
+							httpMethod=http_method,
+							statusCode='200',
+							responseModels={
+								'application/json': 'Empty' #TODO: make like in console
+							})
+					except:
+						a = 5
+						#TODO: update because http_method could change?
 
 				return add_response
 
@@ -867,9 +998,9 @@ class AWS:
 
 				#check if usage plan exists
 				usage_plan_list = AWS.APIGateway.UsagePlan.List(apig)
-				active_usage = next((x for x in usage_plan_list if x['name'] == usage_name), None)
+				active_usages = [x for x in usage_plan_list if x['name'] == usage_name]
 
-				if active_usage is None: #doesnt exist yet
+				if len(active_usages) <= 0: #doesnt exist yet
 					throttle = {
 						'burstLimit': throttle_burst,
 						'rateLimit': throttle_rate
@@ -882,9 +1013,9 @@ class AWS:
 					return apig.client.create_usage_plan(name=usage_name,description=purpose,throttle=throttle,quota=quota)
 				else:
 					if overwrite:
-						return AWS.APIGateway.UsagePlan.Update(apig,active_usage['id'],purpose,throttle_rate,throttle_burst,quota_limit,quota_period,quota_offset)
+						return AWS.APIGateway.UsagePlan.Update(apig,active_usages[0]['id'],purpose,throttle_rate,throttle_burst,quota_limit,quota_period,quota_offset)
 					else:
-						return active_usage
+						return active_usages[0]
 
 			def Update(apig,usageplan_id: str,purpose: str,throttle_rate: float,throttle_burst: int,quota_limit: int,quota_period: str,quota_offset: int):
 				"""Update an existing usage plan.
@@ -956,12 +1087,31 @@ class AWS:
 				Args:
 					apig (APIGateway): Instantiated APIGateway credential access object.
 					usageplan_id (str): Id of specified usageplan.
-					key_id (stR): Id of specified key.
+					key_id (str): Id of specified key.
 					key_type (str): 'API_KEY' | ??
 				Returns:
 					dict: response from server.
 				"""
-				return apig.client.create_usage_plan_key(usagePlanId=usageplan_id,keyId=key_id,keyType=key_type)
+
+				try:
+					return apig.client.create_usage_plan_key(usagePlanId=usageplan_id,keyId=key_id,keyType=key_type)
+				except Exception as ex:
+
+					#TODO: try to add the key,
+					#can cause exception is key is already subscribed to a/this usage plan
+
+					if ex.response['Error']['Code'] == 'ConflictException':
+						keys = [x for x in apig.client.get_usage_plan_keys(usagePlanId=usageplan_id)['items'] if x['id'] == key_id]
+
+						if len(keys) <= 0:
+							raise ex #unknown conflict?
+
+						return keys[0] #this returns the key dict, different than response?
+					else:
+						raise ex
+
+
+					a = 5
 
 			def Remove_Key(apig,usageplan_id: str,key_id: str):
 				"""Remove an existing API Key from a Usage Plan.
@@ -988,14 +1138,26 @@ class AWS:
 					https://docs.aws.amazon.com/apigateway/api-reference/link-relation/usageplan-update/
 				"""
 
-				return apig.client.update_usage_plan(
-					usagePlanId=usageplan_id,
-					patchOperations=[
-						{
-							'op': 'add',#|'remove'|'replace'|'move'|'copy'|'test',
-							'path': '/apiStages',
-							'value': rest_api_id + ':' + stage_name
-						}])
+				#TODO: first check if usage plan already has this stage in it?
+				all_plans = AWS.APIGateway.UsagePlan.List(apig)
+
+				this_plan = [x for x in all_plans if x['id'] == usageplan_id][0] #index will fail if plan not already created
+
+				stages_in_this_plan = [x for x in this_plan['apiStages'] if x['stage'] == stage_name]
+
+				if len(stages_in_this_plan) <= 0:
+
+					return apig.client.update_usage_plan(
+						usagePlanId=usageplan_id,
+						patchOperations=[
+							{
+								'op': 'add',#|'remove'|'replace'|'move'|'copy'|'test',
+								'path': '/apiStages',
+								'value': rest_api_id + ':' + stage_name
+							}
+						])
+
+				return this_plan
 
 		class Key:
 			"""Rest API Authorization Keys.
@@ -1035,13 +1197,13 @@ class AWS:
 
 				api_key_list = AWS.APIGateway.Key.List(apig)
 
-				active_api_key = next((x for x in api_key_list if x['name'] == key_name), None)
+				active_api_keys = [x for x in api_key_list if x['name'] == key_name]
 
-				if active_api_key is None:
+				if len(active_api_keys) <= 0:
 					return apig.client.create_api_key(name=key_name,description=purpose,\
-						enabled=enabled,generateDistinctId=generate_distict_id,value=value)
+									   enabled=enabled,generateDistinctId=generate_distict_id,value=value)
 				else:
-					return active_api_key
+					return AWS.APIGateway.Key.Get_Key(apig,active_api_keys[0]['id'],include_value=True)
 
 			def Delete(apig,key_id: str):
 				"""Delete an API key.
@@ -1057,11 +1219,9 @@ class AWS:
 		"""Class for managing Lambda functions.
 		Args:
 			aws_creds (dict):
-		Attributes:
-			image (str): operating system container image (Docker)
 		"""
 
-		image = 'dacut/amazon-linux-python-3.6'
+		image = 'quiltdata/lambda' #'dacut/amazon-linux-python-3.6' no longer available
 
 		def __init__(self,aws_creds):
 
@@ -1176,13 +1336,20 @@ class AWS:
 			Args:
 				fcn_name (str): Specified lambda function by name.
 				source_arn (str): ARN of the source to permit access to.
-				action (str): Action to permit access to.
-				principle (str): Principle location of resource.
-				statemendID (str): ??
+				action (str): lambda:InvokeFunction | lambda:GetFunction |   -> lambda:*   ?
+				principle (str): domain style for services-> s3.amazonaws.com | sns.amazonaws.com | apigateway.amazonaws.com
+				statemendID (str): A statement identifier that differentiates the statement from others in the same policy.
 			Returns:
 				dict: server response.
+			Ref:
+				https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/lambda.html#Lambda.Client.add_permission
+				https://forums.aws.amazon.com/thread.jspa?messageID=745586&#745586
+				https://docs.aws.amazon.com/lambda/latest/dg/with-on-demand-https-example.html
+			Notes:
+				--source-arn arn:aws:execute-api:<region>:<account_id>:<api_id>/<stage_name>/*
+				The wildcard at the end is because, perhaps, both the http_method and CORs OPTION must have permission
 			"""
-
+			
 			resp = self.client.add_permission(
 				FunctionName=fcn_name,
 				StatementId=statementID,

@@ -112,22 +112,22 @@ class LambdaConfig(DictableObj):
 class ApiConfig(DictableObj):
 	"""Configuration for an API gateway.
 	Args:
-		api_name
-		purpose
-		usage_name
-		usage_purpose
-		usage_throttle_burst
-		usage_throttle_limit
-		usage_quota
-		usage_quota_period
-		usage_quota_offset
-		key_name
-		key_purpose
-		resource_name
-		http_method
-		stage_name
-		stage_purpose
-		deployment_purpose
+		api_name (str):
+		purpose (str):
+		usage_name (str):
+		usage_purpose (str):
+		usage_throttle_rate (float):
+		usage_throttle_burst (int):
+		usage_quota_limit (int):
+		usage_quota_period (str): 'DAY' | 'WEEK' | 'MONTH'
+		usage_quota_offset (int): 
+		key_name (str):
+		key_purpose (str):
+		resource_name (str):
+		http_method (str): 'GET'|'POST'|'PUT'|'PATCH'|'DELETE'|'HEAD'|'OPTIONS'|'ANY'
+		stage_name (str):
+		stage_purpose (str):
+		deployment_purpose (str):
 
 	"""
 	def __init__(self,kwargs):
@@ -136,11 +136,11 @@ class ApiConfig(DictableObj):
 		self.purpose = kwargs['purpose']
 		self.usage_name = kwargs['usage_name']
 		self.usage_purpose = kwargs['usage_purpose']
-		self.usage_throttle_burst = kwargs['throttle_burst']
-		self.usage_throttle_limit = kwargs['throttle_limit']
-		self.usage_quota = kwargs['quota_limit']
-		self.usage_quota_period = kwargs['quota_period']
-		self.usage_quota_offset = kwargs['quota_offset']
+		self.usage_throttle_rate = kwargs['usage_throttle_rate']
+		self.usage_throttle_burst = kwargs['usage_throttle_burst']
+		self.usage_quota_limit = kwargs['usage_quota_limit']
+		self.usage_quota_period = kwargs['usage_quota_period']
+		self.usage_quota_offset = kwargs['usage_quota_offset']
 		self.key_name = kwargs['key_name']
 		self.key_purpose = kwargs['key_purpose']
 		self.resource_name = kwargs['resource_name']
@@ -765,6 +765,7 @@ class CloudManager:
 			objects = [{'Key': obj} for obj in objectnames]
 			return Wasabi.Bucket.Empty(Wasabi(creds),bucketname,{'Objects': objects})
 
+	
 	class ServerlessFunctions:
 		"""For utilizing serverless micro computing cloud services.
 		Ref:
@@ -794,11 +795,11 @@ class CloudManager:
 
 			return resp
 
-		def Deploy(lambda_config: LambdaConfig,api_config: ApiConfig,creds=''):
+		def Deploy(lambda_config: LambdaConfig,api_config=None,creds=''):
 			"""Deploy a function to cloud serverless architecture.
 			Args:
 				lambda_config (LambdaConfig): The configuration for deployment.
-				api_config (ApiConfig): Default None, configuration for granting API endpoint access.
+				api_config (ApiConfig): If provided configures for granting API endpoint access.
 				creds (dict): Credentials for the service.
 			Returns:
 				dict: lambda_creation_response
@@ -808,10 +809,7 @@ class CloudManager:
 				The IAM role to be used must already exist.
 				Currently API Gateway setup through ApiConfig is untested.
 			"""
-
-			if api_config is not None:
-				raise ValueError('API Gateway configuration is currently untested.')
-
+			
 			#get the IAM role this function is to assume
 			role_list = AWS.IAM.Role.List(AWS.IAM(creds))
 			role = next((x for x in role_list if x['RoleName'] == lambda_config.role_name), None)
@@ -826,6 +824,7 @@ class CloudManager:
 				lambda_config.environment_name,
 				AWS.Lambda.image,
 				pip_requirements_list=lambda_config.pip_requirements_list)
+
 			if dependancy_zip_filePath is None:
 				#was none because no requirements so make dummy zip file for adding supplimentary/main files
 				dependancy_zip_filePath = lambda_config.func_filepath.split('.')[0] + '.zip'
@@ -848,59 +847,8 @@ class CloudManager:
 			api_creation_response = None
 			if api_config is not None:
 
-				#create api client
-				apig = AWS.APIGateway(creds)
-
-				#create api itself
-				api_creation_response = AWS.APIGateway.Create(apig,api_config.api_name,api_config.purpose,\
-					overwrite=True,rest_type='REGIONAL',apikeysource='HEADER')
-
-				#create usage plan
-				usageplan_response = AWS.APIGateway.UsagePlan.Create(apig,api_config.usage_name,api_config.usage_purpose,\
-					overwrite=True,throttle_rate=api_config.throttle_rate,throttle_burst=api_config.throttle_burst,\
-					quota_limit=api_config.quota_limit,quota_period=api_config.quota_period,quota_offset=api_config.quota_offset)
-
-				#create api key
-				key_creation_response = AWS.APIGateway.Key.Create(apig,api_config.key_name,api_config.key_purpose)
-
-				#add created key to usage plan
-				key_added_response = AWS.APIGateway.UsagePlan.Add_Key(apig,usageplan_response['id'],key_creation_response['id'])
-
-				#create api resource
-				resource_creation_response = AWS.APIGateway.Resource.Create(apig,api_config.api_name,api_config.resource_name)
-				
-				#create method in resource for function
-				method_creation_response = AWS.APIGateway.Method.Create(apig,api_config.api_name,api_config.resource_name,\
-					api_config.http_method)
-
-				#add integration
-				integration_added_response = AWS.APIGateway.Method.Add_Integration(apig,api_config.api_name,\
-					resource_creation_response[0]['parentId'],api_config.http_method,lambda_creation_response[0]['FunctionArn'])
-			
-				acc_id = integration_added_response['uri'].split(':')[9]
-				#TODO: add permission ?
-				source_arn = 'arn:aws:execute-api:' + creds['region'] + \
-					':' + acc_id + ':' + api_creation_response['id'] + '/*/' + api_config.http_method + '/' + lambda_config.func_name
-				resp = AWS.Lambda(creds).Add_Permission(lambda_config['func_name'],source_arn)
-
-				#TODO: create prod stage
-				#add prod stage to usage plan so uses api key
-				usage_update_resp = AWS.APIGateway.UsagePlan.Add_Stage(apig,usageplan_response['id'],\
-					api_creation_response['id'],api_config.stage_name)
-
-				deploy_resp = AWS.APIGateway.Deploy(apig,api_creation_response['id'],api_config.stage_name,\
-					api_config.stage_purpose,api_config.deployment_purpose)
-
-				#the api endpoint url
-				endpoint_url = 'https://' + api_creation_response['id'] + '.execute-api.us-east-2.amazonaws.com/' + api_config.stage_name
-			
-				#api access token
-				access_token = key_creation_response['value']
-
-				api_creation_response['AccessToken'] = access_token
-				api_creation_response['Endpoint'] = endpoint_url
-
-				a = 5
+				api_creation_response = CloudManager.ServerlessFunctions.Utils.Create_rest_api(\
+					api_config,lambda_creation_response[0]['FunctionName'],creds=creds)
 
 			return lambda_creation_response,api_creation_response
 
@@ -916,6 +864,87 @@ class CloudManager:
 			return AWS.Lambda(creds).Invoke(fcn_name,event)
 
 		class Utils:
+
+			def Create_rest_api(api_config: ApiConfig,fcn_name: str,creds=''):
+				"""Create a RESTful API to expose a serverless function.
+				Args:
+					api_config (ApiConfig):
+					fcn_name (str): Function specified by name.
+					creds (dict): Credentials for the service.
+				Returns:
+					dict: api_creation_response
+				"""
+
+				#create api client
+				apig = AWS.APIGateway(creds)
+
+				#instiate lambda, list functions, and get ARN if exists
+				lmb = AWS.Lambda(creds)
+				lambdas = lmb.List()
+
+				function_arns = [x['FunctionArn'] for x in lambdas if x['FunctionName'] == fcn_name]
+				if len(function_arns) != 1:
+					raise ValueError('function specified by name not found/no arn')
+				else:
+					function_arn = function_arns[0]
+
+				#create api itself
+				api_creation_response = AWS.APIGateway.Create(apig,api_config.api_name,api_config.purpose,\
+					overwrite=True,rest_type='REGIONAL',apikeysource='HEADER')
+
+				#create usage plan
+				usageplan_response = AWS.APIGateway.UsagePlan.Create(apig,api_config.usage_name,api_config.usage_purpose,\
+					overwrite=True,throttle_rate=api_config.usage_throttle_rate,throttle_burst=api_config.usage_throttle_burst,\
+					quota_limit=api_config.usage_quota_limit,quota_period=api_config.usage_quota_period,\
+					quota_offset=api_config.usage_quota_offset)
+
+				#create api key
+				key_creation_response = AWS.APIGateway.Key.Create(apig,api_config.key_name,api_config.key_purpose)
+
+				#add created key to usage plan
+				key_added_response = AWS.APIGateway.UsagePlan.Add_Key(apig,usageplan_response['id'],key_creation_response['id'])
+
+				#create api resource
+				resource_creation_response = AWS.APIGateway.Resource.Create(apig,api_config.api_name,api_config.resource_name)
+				
+				#create method in resource for function
+				method_creation_response = AWS.APIGateway.Method.Create(apig,api_config.api_name,api_config.resource_name,\
+					api_config.http_method)
+
+				#add integration
+				#TODO: havent been able to totally use below code
+				integration_added_response = AWS.APIGateway.Method.Add_Integration(apig,api_config.api_name,\
+					resource_creation_response['id'],api_config.http_method,function_arn,integration_type='AWS')
+			
+				#create a deployment for the api
+				deploy_resp = AWS.APIGateway.Deploy(apig,api_creation_response['id'],api_config.stage_name,\
+					api_config.stage_purpose,api_config.deployment_purpose)
+
+				#create stage for api
+				create_stage_response = AWS.APIGateway.Create_Stage(apig,api_creation_response['id'],deploy_resp['id'],\
+					api_config.stage_name,api_config.stage_purpose)
+
+				#add stage to usage plan so uses api key
+				usage_update_resp = AWS.APIGateway.UsagePlan.Add_Stage(apig,usageplan_response['id'],\
+					api_creation_response['id'],api_config.stage_name)
+
+				#create the source arn of this api method
+				source_arn = 'arn:aws:execute-api:' + creds['region'] + \
+					':' + integration_added_response['uri'].split(':')[9] + ':' + \
+					api_creation_response['id'] + '/' + api_config.stage_name + '/' + '*'#api_config.http_method
+					#'/' + api_config.resource_name + '/*'# + func_name
+
+				#add permission to lambda for the stage's method
+				resp = AWS.Lambda(creds).Add_Permission(fcn_name,source_arn)
+				
+				#the api endpoint url
+				endpoint_url = 'https://' + api_creation_response['id'] + '.execute-api.' + creds['region'] + \
+					'.amazonaws.com/' + api_config.stage_name + '/' + api_config.resource_name
+				
+				api_creation_response['x-api-key'] = key_creation_response['value']
+				api_creation_response['Endpoint'] = endpoint_url
+
+				return api_creation_response
 
 			def serverless_check_package_size(dependancy_zip_filePath: str,cloudCreds_database: dict):
 				#TODO: use serverless_usage to get sizes allowed, and then see how big potential function upload is
@@ -1734,7 +1763,6 @@ class CloudManager:
 
 			return lambda_summary
 		
-
 	class IAM:
 		"""For interacting with Identity Access Management services.
 		Ref:
@@ -2473,10 +2501,29 @@ lambda_config = LambdaConfig({
 	'overwrite': True,
 	})
 
+api_config = ApiConfig({
+	'api_name': 'my_api',
+	'purpose': 'For providing RESTful API to serverless function',
+	'usage_name': 'usage1',
+	'usage_purpose': 'Managing api usage',
+	'usage_throttle_rate': 100.0,
+	'usage_throttle_burst': 50,
+	'usage_quota_limit': 50,
+	'usage_quota_period': 'WEEK',
+	'usage_quota_offset': 2,
+	'key_name': 'testkey',
+	'key_purpose': 'requiring api calls to provide key for access',
+	'resource_name': 'resource',
+	'http_method': 'GET',
+	'stage_name': 'prod',
+	'stage_purpose': 'testing production',
+	'deployment_purpose': 'for front test',
+	})
+
 #deploy the function
 #NOTE: because some packages require compilation before deployment, Docker is used and must be running beforehand
 #please see Docker.Compile notes!
-lambda_resp,_ = CloudManager.ServerlessFunctions.Deploy(lambda_config,api_config=None,creds=creds)
+lambda_resp,_ = CloudManager.ServerlessFunctions.Deploy(lambda_config,api_config=api_config,creds=creds)
 
 #invoking the function requires submitting a dict with the arguments to submit
 argument_value = 12345
@@ -2537,9 +2584,9 @@ CloudManager.Cluster.SendCommand(compute_cluster,'echo hello',node_idz=[0])
 
 # TODO:
 * Many service responses are limited and may accept markers for pagination -> document and enable this in CloudManager
-* Complete the API Gateway integration so deploying serverless functions in a RESTful manner is easy
 * Complete additional controls for digitalocean_service for furthering automation capabilities
 * Major: complete service routers so eventually other services may be added such as Linode for Cluster, or Azure for Serverless
-* AWS cloudfront and s3 static website hosting capabilities (augmenting the wasabi_service_)
+* AWS cloudfront and s3 static website hosting capabilities (augmenting the wasabi_service)
 * Respectable testing procedures...
+
 """

@@ -340,7 +340,8 @@ class Docker:
 
 
 	image_for_runtime = {
-		'python3.6': 'dacut/amazon-linux-python-3.6', #TODO: this image should determine useYum for Linux.API....
+		#'python3.6': 'dacut/amazon-linux-python-3.6', #looks like this image no longer exists
+		'python3.6': 'quiltdata/lambda',
 		'ubuntu': 'ubuntu:18.04',
 		}
 
@@ -360,7 +361,6 @@ class Docker:
 		shells = {
 			'win32': 'powershell.exe',
 			'linux2': '',
-			'linux2': '',
 			'linux': ''
 			}
 
@@ -368,14 +368,11 @@ class Docker:
 
 	class API:
 		
-		#TODO: build using dockerfile_lines or specify filepath
-
-		def Create(container_name='default_container_name',image='dacut/amazon-linux-python-3.6',\
-			n_cpu=-1.0,mem_M=-1,swap_M=-10,network=''):
+		def Create(container_name='default_container_name',image='quiltdata/lambda',n_cpu=-1.0,mem_M=-1,swap_M=-10,network=''):
 			"""Command to create a container.
 			Args:
 				container_name (str): 'default_container_name'
-				image (str): 'dacut/amazon-linux-python-3.6'
+				image (str): see Docker.image_for_runtime.values()
 				n_cpu (float): 
 				mem_M (int): Mb of RAM for container
 				swap_M (int): Mb of swapfile
@@ -422,8 +419,10 @@ class Docker:
 			Args:
 				container_name (str): 'default_container_name'
 				command (str): 'echo hello'
+				useBash (bool): Prepends command with 'bash -c'
 			Returns:
-				str: command string."""
+				str: command string.
+			"""
 			if useBash:
 				command = 'bash -c "' + command + '"'
 			return 'docker exec ' + container_name + ' ' + command
@@ -435,7 +434,8 @@ class Docker:
 				environment_path (str): Folder where to install.
 				container_name (str): 'default_container_name'
 			Returns:
-				str: command string."""
+				str: pip_install_command
+			"""
 			#TODO: pip3 is dependant on the distribution - pip3/yum stuff for AMI
 			command = 'pip3 install ' + pkg + ' -t /' + environment_path
 			return Docker.API.ArbitraryCommand(container_name=container_name,command=command)
@@ -446,33 +446,56 @@ class Docker:
 				container_id (str): 'ae77tg...'
 				source_filepath (str): Source filepath.
 				destination_filepath (str): Destination filepath.
-				fromDocker (bool): True if copying the source from docker."""
+				fromDocker (bool): True if copying the source from docker.
+			Returns:
+				str: copy_command
+			"""
 			if fromDocker:
 				return 'docker cp ' + container_id + ':' + source_filepath + ' ' + destination_filepath
 			else: #copy to docker
 				return 'docker cp ' + source_filepath + ' ' + container_id + ':' + destination_filepath
 
 		def ListProcesses(container_name='default_container_name'):
-			#TODO: ps -aux ? https://stackoverflow.com/questions/27757405/how-to-kill-process-inside-container-docker-top-command
+			"""List running processes in a container.
+			Args:
+				container_name (str): Container specified by name.
+			Returns:
+				str: top_command
+			TODO:
+				ps -aux ? https://stackoverflow.com/questions/27757405/how-to-kill-process-inside-container-docker-top-command
+			"""
 			return 'docker top ' + container_name
 
 		def Monitor(filepath: str):
-			"""Create a monitoring log."""
+			"""Create a monitoring log.
+			Args:
+				filepath (str): Filepath to write log to.
+			Returns:
+				str: monitor_command
+			"""
 			return 'docker stats --format "{{.ID}},{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}},{{.NetIO}},{{.BlockIO}},{{.PIDs}}" >> ' + filepath
 		
-		def Id(name: str):
-			"""Get id of a container specified by name."""
-			return 'docker ps -aqf name=' + name
+		def Id(container_name: str):
+			"""Get id of a container.
+			Args:
+				container_name (str):
+			Returns:
+				str: id_command
+			"""
+			return 'docker ps -aqf name=' + container_name
 
 		def Version():
-			"""Get the current version of Docker."""
+			"""Get the current version of Docker.
+			Returns:
+				str: version_command
+			"""
 			return 'docker --version'
 
-	def Create(name: str,runtime: str,n_cpu: float,ram_Mb: int,swap_Mb: int,network='',dontExecute=False):
+	def Create(container_name: str,runtime: str,n_cpu: float,ram_Mb: int,swap_Mb: int,network='',dontExecute=False):
 		"""Create a virtual compute container.
 		Args:
-			name (str):
-			runtime (str):
+			name (str): Name of the container.
+			runtime (str): see Docker.image_for_runtime.keys()
 			n_cpu (float):
 			ram_Mb (int):
 			swap_Mb (int):
@@ -483,21 +506,21 @@ class Docker:
 		try: image = Docker.image_for_runtime[runtime]
 		except: image = runtime
 
-		create_command = Docker.API.Create(container_name=name,image=image,n_cpu=n_cpu,mem_M=ram_Mb,swap_M=swap_Mb,network=network)
+		create_command = Docker.API.Create(container_name=container_name,image=image,n_cpu=n_cpu,mem_M=ram_Mb,swap_M=swap_Mb,network=network)
 		if dontExecute: return create_command
 		return subprocess.check_output([Docker.shell_executor(),create_command]).decode('utf-8')
 
-	def Start(name: str,dontExecute=False):
+	def Start(container_name: str,dontExecute=False):
 		"""Start a container.
 		Args:
-			name (str):
+			container_name (str):
 			dontExecute (bool): Whether to execute the start command using a subprocess.
 		Returns:
 			str: stdout
 		Notes:
 			If dontExecute, then the start_command api command is returned.
 		"""
-		start_command = Docker.API.Start(name)
+		start_command = Docker.API.Start(container_name)
 		if dontExecute: return start_command
 		return subprocess.check_output([Docker.shell_executor(),start_command]).decode('utf-8')
 
@@ -511,37 +534,37 @@ class Docker:
 			str: stdout
 		"""
 		#TODO: cant do dontExecute becauserequires container id ??????
+		#TODO: requires container id but argument is container name? does it matter?
 		copy_command = Docker.API.CopyFile(name,source_filepath,destination_filepath)
 		if dontExecute: return copy_command
 		return subprocess.check_output([Docker.shell_executor(),copy_command]).decode('utf-8')
 
-	def Command(name: str,command: str,useBash=False,dontExecute=False):
+	def Command(container_name: str,command: str,useBash=False,dontExecute=False):
 		"""Execute a command in a container.
 		Args:
-			name (str):
-			command (str):
+			container_name (str): Container specified by name.
+			command (str): Command to execute
 			useBash (bool):
 		Returns:
 			str: stdout
 		"""
-		arb_command = Docker.API.ArbitraryCommand(name,command,useBash)
+		arb_command = Docker.API.ArbitraryCommand(container_name,command,useBash)
 		return subprocess.check_output([Docker.shell_executor(),arb_command]).decode('utf-8')
 
 	def Compile(environment_name: str,runtime: str,pip_requirements_list=None,requirements_filePath=None):
 		"""Create and package a virtual python environment for a runtime using a container.
 		Args:
-			environment_name (str): String name for the virtual environment to create.
+			environment_name (str): Name for the virtual environment to create.
 			runtime (str): Docker.image_for_runtime[runtime], if fails, uses the runtime as the docker image
 			pip_requirements_list (list): None by default, list of pip requirements for environment -> 'mypackage==1.2.3'
 			requirements_filePath (str): None by default, filePath to a requirements.txt.
 		Returns:
 			str: env_zip_filePath
-		
 		Notes:
 			A container with the correct image should already have been created.
 			Ex:
 				Create a docker container with the AWS lambda image:
-				docker create -it --name default_container_name dacut/amazon-linux-python-3.6
+				docker create -it --name default_container_name lambci/lambda:python3.6'
 
 				Interact with the container via powershell/bash
 				docker exec -it container_name /bin/bash

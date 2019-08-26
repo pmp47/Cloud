@@ -230,10 +230,29 @@ lambda_config = LambdaConfig({
 	'overwrite': True,
 	})
 
+api_config = ApiConfig({
+	'api_name': 'my_api',
+	'purpose': 'For providing RESTful API to serverless function',
+	'usage_name': 'usage1',
+	'usage_purpose': 'Managing api usage',
+	'usage_throttle_rate': 100.0,
+	'usage_throttle_burst': 50,
+	'usage_quota_limit': 50,
+	'usage_quota_period': 'WEEK',
+	'usage_quota_offset': 2,
+	'key_name': 'testkey',
+	'key_purpose': 'requiring api calls to provide key for access',
+	'resource_name': 'resource',
+	'http_method': 'GET',
+	'stage_name': 'prod',
+	'stage_purpose': 'testing production',
+	'deployment_purpose': 'for front test',
+	})
+
 #deploy the function
 #NOTE: because some packages require compilation before deployment, Docker is used and must be running beforehand
 #please see Docker.Compile notes!
-lambda_resp,_ = CloudManager.ServerlessFunctions.Deploy(lambda_config,api_config=None,creds=creds)
+lambda_resp,_ = CloudManager.ServerlessFunctions.Deploy(lambda_config,api_config=api_config,creds=creds)
 
 #invoking the function requires submitting a dict with the arguments to submit
 argument_value = 12345
@@ -294,8 +313,8 @@ CloudManager.Cluster.SendCommand(compute_cluster,'echo hello',node_idz=[0])
 
 # TODO:
 * Many service responses are limited and may accept markers for pagination -> document and enable this in CloudManager
-* Complete the API Gateway integration so deploying serverless functions in a RESTful manner is easy
 * Complete additional controls for digitalocean_service for furthering automation capabilities
 * Major: complete service routers so eventually other services may be added such as Linode for Cluster, or Azure for Serverless
-* AWS cloudfront and s3 static website hosting capabilities (augmenting the wasabi_service_)
+* AWS cloudfront and s3 static website hosting capabilities (augmenting the wasabi_service)
 * Respectable testing procedures...
+

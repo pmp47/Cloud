@@ -1,6 +1,6 @@
 from setuptools import setup
 setup(name='Cloud',
-	version='1.1.1',
+	version='1.2.1',
 	description='A wrapping library focused on automating conventional cloud operations with various services such as AWS and DigitalOcean.',
 	url='https://www.github.com/pmp47/Cloud',
 	author='pmp47',
