@@ -2,7 +2,6 @@
 #pip installs
 
 #customs
-import flashfile_template #importing as trick to auto include in package
 
 #builtins
 import subprocess
@@ -673,7 +672,7 @@ class Docker:
 		
 		#load the flashfile_template file into memory
 		if flashfile_template_filepath == None:
-			flashfile_template_filepath = os.path.dirname(os.path.abspath(__file__)) + '/flashfile_template.py'
+			flashfile_template_filepath = os.path.dirname(os.path.abspath(__file__)) + '/data/flashfile_template.py'
 		flash_lines = open(flashfile_template_filepath,'r').readlines()
 		
 		#must add escapes for single quotes
