@@ -1,1 +1,1 @@
-from cloud.cloud import *
+from .cloud import *

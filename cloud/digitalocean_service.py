@@ -2,9 +2,9 @@
 #pip installs
 from digitalocean import SSHKey, Droplet, Manager, Firewall, InboundRule, OutboundRule, Destinations, Sources
 from paramiko import SSHClient, RSAKey, AutoAddPolicy
+from dictableobject import UniqueStatusObject, SecurableObject, DictableObj
 
 #customs
-from dictableobj import UniqueStatusObject, SecurableObject, DictableObj
 
 #builtins
 import socket

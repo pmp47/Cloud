@@ -2,7 +2,7 @@
 #pip installs
 
 #customs
-#import flashfile_template
+import flashfile_template #importing as trick to auto include in package
 
 #builtins
 import subprocess
@@ -338,6 +338,7 @@ class Docker:
 
 	#https://www.digitalocean.com/community/questions/why-my-docker-container-destroy-itself
 
+	default_python = 'python3.6' #default version of python to use
 
 	image_for_runtime = {
 		#'python3.6': 'dacut/amazon-linux-python-3.6', #looks like this image no longer exists
@@ -368,28 +369,39 @@ class Docker:
 
 	class API:
 		
-		def Create(container_name='default_container_name',image='quiltdata/lambda',n_cpu=-1.0,mem_M=-1,swap_M=-10,network=''):
+		def Create(container_name='default_container_name',image='',n_cpu=-1.0,mem_M=-1,swap_M=-10,additional_params={}):
 			"""Command to create a container.
 			Args:
 				container_name (str): 'default_container_name'
-				image (str): see Docker.image_for_runtime.values()
+				image (str): docker image to use -> see Docker.image_for_runtime.values()
 				n_cpu (float): 
 				mem_M (int): Mb of RAM for container
 				swap_M (int): Mb of swapfile
-				network (str): join a network like 'host'
+				additional_params (dict): keys are command-line args like '--gpus', values are the values
 			Returns:
 				str: command string.
+			Refs:
+				https://docs.docker.com/engine/reference/commandline/create/
+			Notes:
+				If image is not set, default is Docker.image_for_runtime[Docker.default_python]
 			"""
-			#return 'docker create -it --network host --name ' + container_name + ' ' + image
+
+			#if no image, use default of python
+			image = Docker.image_for_runtime[Docker.default_python] if image == '' else image
+
 			base = 'docker create -it --name ' + container_name + ' '
 			if n_cpu > 0:
 				base = base + '--cpus="' + str(n_cpu) + '" '
 			if mem_M > 0:
 				base = base + '--memory=' + str(mem_M) + 'M '
-			if swap_M > -1: #-1 means unlimited
-				base = base + '--memory-swap=' + str(mem_M) + 'M '
-			if len(network) > 0:
-				base = base + '--network=' + network + ' '
+			if swap_M > -1: #not allowing -1 means unlimited
+				base = base + '--memory-swap=' + str(swap_M) + 'M '
+
+			if len(list(additional_params.keys())) > 0:
+				for key in list(additional_params.keys()):
+					key = key + '=' if key[-1] != '=' else key
+					base + key + str(additional_params[key])
+
 			return base + image
 
 		def Start(container_name='default_container_name'):
@@ -397,7 +409,8 @@ class Docker:
 			Args:
 				container_name (str): 'default_container_name'
 			Returns:
-				str: command string."""
+				str: command string.
+			"""
 			return 'docker start ' + container_name
 
 		def Stop(container_name='default_container_name'):
@@ -405,13 +418,15 @@ class Docker:
 			Args:
 				container_name (str): 'default_container_name'
 			Returns:
-				str: command string."""
+				str: command string.
+			"""
 			return 'docker stop ' + container_name
 
 		def List():
 			"""Command to list containers.
 			Returns:
-				str: command string."""
+				str: command string.
+			"""
 			return 'docker ps -a'
 
 		def ArbitraryCommand(container_name='default_container_name',command='echo hello',useBash=False):
@@ -491,22 +506,26 @@ class Docker:
 			"""
 			return 'docker --version'
 
-	def Create(container_name: str,runtime: str,n_cpu: float,ram_Mb: int,swap_Mb: int,network='',dontExecute=False):
+	def Create(container_name: str,runtime: str,n_cpu: float,ram_Mb: int,swap_Mb: int,additional_params={},dontExecute=False):
 		"""Create a virtual compute container.
 		Args:
 			name (str): Name of the container.
-			runtime (str): see Docker.image_for_runtime.keys()
-			n_cpu (float):
-			ram_Mb (int):
-			swap_Mb (int):
-			network (str):
+			runtime (str): see Docker.image_for_runtime.keys(); Docker.default_python if runtime is ''
+			n_cpu (float): Number of cpus to allocate for the container.
+			ram_Mb (int): Mb of RAM to allocate for the container.
+			swap_Mb (int): Mb of ROM to allocate for the container's use as RAM.
+			additional_params (dict): see Docker.API.Create
+			dontExecute (bool): Returns the API command before it can be sub process executed.
 		Returns:
 			str: stdout
+		Ref:
+			https://docs.docker.com/engine/reference/commandline/create/
 		"""
+		runtime = Docker.default_python if runtime == '' else runtime
 		try: image = Docker.image_for_runtime[runtime]
 		except: image = runtime
 
-		create_command = Docker.API.Create(container_name=container_name,image=image,n_cpu=n_cpu,mem_M=ram_Mb,swap_M=swap_Mb,network=network)
+		create_command = Docker.API.Create(container_name=container_name,image=image,n_cpu=n_cpu,mem_M=ram_Mb,swap_M=swap_Mb,additional_params=additional_params)
 		if dontExecute: return create_command
 		return subprocess.check_output([Docker.shell_executor(),create_command]).decode('utf-8')
 
@@ -514,11 +533,9 @@ class Docker:
 		"""Start a container.
 		Args:
 			container_name (str):
-			dontExecute (bool): Whether to execute the start command using a subprocess.
+			dontExecute (bool): Returns the API command before it can be sub process executed.
 		Returns:
 			str: stdout
-		Notes:
-			If dontExecute, then the start_command api command is returned.
 		"""
 		start_command = Docker.API.Start(container_name)
 		if dontExecute: return start_command
@@ -530,10 +547,10 @@ class Docker:
 			name (str):
 			source_filepath (str): Source filepath.
 			destination_filepath (str): Destination filepath.
+			dontExecute (bool): Returns the API command before it can be sub process executed.
 		Returns:
 			str: stdout
 		"""
-		#TODO: cant do dontExecute becauserequires container id ??????
 		#TODO: requires container id but argument is container name? does it matter?
 		copy_command = Docker.API.CopyFile(name,source_filepath,destination_filepath)
 		if dontExecute: return copy_command
@@ -544,11 +561,13 @@ class Docker:
 		Args:
 			container_name (str): Container specified by name.
 			command (str): Command to execute
-			useBash (bool):
+			useBash (bool): Use bash to execute the command in the container
+			dontExecute (bool): Returns the API command before it can be sub process executed.
 		Returns:
 			str: stdout
 		"""
 		arb_command = Docker.API.ArbitraryCommand(container_name,command,useBash)
+		if dontExecute: return arb_command
 		return subprocess.check_output([Docker.shell_executor(),arb_command]).decode('utf-8')
 
 	def Compile(environment_name: str,runtime: str,pip_requirements_list=None,requirements_filePath=None):
@@ -584,7 +603,7 @@ class Docker:
 			container_image = Docker.image_for_runtime[runtime]
 		except:
 			container_image = runtime
-		print(str(datetime.now()) + ' --Using docker image -> ' + container_image + ' to build environment -> ' + environment_name)
+		tprint(' --Using docker image -> ' + container_image + ' to build environment -> ' + environment_name)
 
 		#list all containers and start one with specified image
 		#TODO: this starts all containers of this image, should be specified by name?
@@ -664,7 +683,7 @@ class Docker:
 		#insert the passphrase
 		flash_lines[flash_lines.index('#passphrase = []\n')] = 'passphrase = \\\'' + passphrase + '\\\'\n'
 
-		#inser the presigned zip urls
+		#insert the presigned zip urls
 		pzu_line = ''
 		for pzu in presigned_zip_urls:
 			pzu_line = pzu_line + '\\\'' + pzu + '\\\','
@@ -752,6 +771,285 @@ class Docker:
 			copy_zip_output = subprocess.check_output([Docker.shell_executor(),copy_zip_str]).decode('utf-8')
 
 			return curdir + environment_name + '.zip'
+
+
+class Conda:
+	"""
+	
+	"""
+	#https://conda.io/docs/user-guide/configuration/use-condarc.html#specify-environment-directories-envs-dirs
+	#https://github.com/conda/conda-api/blob/master/conda_api.py
+
+	#TODO: use database and store the results from GatherRequirements -> each file can have its own environment
+
+	conda_env_folderpath = '\\'.join(sys.prefix.split('\\')[:-1]) #set to -1 to thow error if not set
+
+	accepted_versions = {
+		'python36':'python3.6'
+		}
+
+	confusion_exceptions = {
+		'Crypto': 'pycryptodome',
+		'tensorflow': 'tensorflow=',
+		'sklearn': ['scipy','numpy','scikit-learn'], #https://stackoverflow.com/questions/36384447/how-to-install-sklearn
+		'pygments': 'Pygments',
+		'kivy': 'Kivy',
+		'security': 'Security',
+		'secretsharing': 'secret-sharing',
+		}
+
+	github_packages = {
+		'secretsharing': 'git+https://github.com/blockstack/secret-sharing',
+		'security': 'git+https://github.com/pmp47/Security',
+		#https://stackoverflow.com/questions/4830856/is-it-possible-to-use-pip-to-install-a-package-from-a-private-github-repository
+
+		}
+
+	github_access_token = ''
+
+	class API:
+		def Info(as_json=True):
+			additional = ' --json' if as_json else ''
+			return 'info' + additional
+
+		def ListInstalls(env_name: str,as_json=True):
+			#https://docs.conda.io/projects/conda/en/latest/commands/list.html
+			additional = ' --json' if as_json else ''
+			return 'list -n ' + env_name + additional
+
+	def List_Installs(env_name: str):
+		"""List all installed packages by Conda Environment name. Be sure to specify Conda.conda_env_folderpath.
+		Args:
+			env_name (str): Conda environment name.
+		Returns:
+			list: pip_installs,
+			str: python_version
+		"""
+
+		#TODO: use this instead
+		#return subprocess.check_output(Conda.API.ListInstalls(env_name),shell=True)
+		#pkgs = json.loads(Conda.Utils.call_conda(Conda.API.ListInstalls(env_name)))
+
+		#get items in site-packages
+		items = os.listdir(Conda.conda_env_folderpath + '\\' + env_name + '\\Lib\\site-packages')
+		site_packages = np.array(items)[npe.find_contains('-info',items)].tolist()
+
+		pip_installs = []
+		for pkg in site_packages:
+			splits = pkg.split('-')
+			
+			requirement = splits[0] + '==' + splits[1].split('.dist')[0]
+			requirement = requirement.replace('_','-')
+			#not changing to git here, thats in formatting
+			#try: #TODO: see if in github collections
+			#	requirement = Conda.github_packages[splits[0]]
+			#	a = 5
+			#except:
+			#	a = 5
+			pip_installs.append(requirement)
+
+		base_items = os.listdir(Conda.conda_env_folderpath + '\\' + env_name)
+		dlls = np.array(base_items)[npe.find_contains('.dll',base_items)].tolist()
+		debuggers = np.array(base_items)[npe.find_contains('.pdb',base_items)].tolist()
+
+		python_versions = []
+		for pdb in debuggers:
+			name = pdb.split('.')[0]
+			same_in_dlls = np.array(dlls)[npe.find_contains(name,dlls)].tolist()
+			if len(same_in_dlls):
+				for version_found in same_in_dlls:
+					try:
+						python_versions.append(Conda.accepted_versions[version_found.split('.')[0]])
+					except:
+						#not an accepted version
+						None
+
+		python_versions = list(set(python_versions))
+		if len(python_versions) > 1:
+			raise ValueError('No python version found?')
+
+		return list(set(pip_installs)),python_versions[0]
+
+	def List_Requirements(seed_filePath: str):
+		"""List the requirements for a filepath *.py
+		Args:
+			seed_filePath (str): Filepath of a python script with proper requirements tags.
+		Returns:
+			list: pip_installs_required
+			list: customs_required
+		"""
+
+		pip_installs_required = []
+		customs_required = []
+		builtins = []
+
+		#read the file
+		with open(seed_filePath, 'r') as infile:
+			text = infile.read()
+
+			try:
+				requirements_text = text.split('--start requirements--')[1].split('--end requirements--')[0]
+				text.split('--end requirements--')[1]
+			except:
+				raise ValueError('File does not contain proper requirements tags')
+
+			#extract all the pip imports and froms
+			pip_install_lines = requirements_text.split('#customs')[0].split('\n')[1:]
+			for pline in pip_install_lines:
+				if len(pline) > 0:
+					if '#' not in pline[0]:
+						pip_installs_required.append(pline.split(' ')[1].split('.')[0])
+
+			#extract all the customs imports and froms
+			customs_lines = requirements_text.split('#customs')[1].split('builtins')[0].split('\n')
+			for cline in customs_lines:
+				if len(cline) > 0:
+					if '#' not in cline[0]:
+						cpkg = cline.split(' ')[1].split('.')[0] + '.py'
+						customs_required.append(cpkg)
+
+		#should be unique
+		pip_installs_required = list(set(pip_installs_required))
+		customs_required = list(set(customs_required))
+
+		return pip_installs_required,customs_required
+
+	def Gather_Requirements(func_filepath: str,env_name: str):
+		"""Gather list of pip requirements for a function file.
+		Args:
+			func_filepath (str): Filepath of specified function *.py
+			env_name (str): Conda environment name.
+		Returns:
+			list: pip_requirements
+			list: sup_filepaths
+			str: runtime
+		"""
+
+		#get all pips available in environment
+		pip_installs,run_time = Conda.List_Installs(env_name)
+
+		#list pips required for func file
+		pip_installs_required,custom_scripts = Conda.List_Requirements(func_filepath)
+		sup_Filepaths_list = []
+		for custom_script in custom_scripts:
+			#assume customs are located in same folder as func target file
+
+			#TODO: use coidefactory?
+
+			splits = func_filepath.replace('/','\\').split('\\')[0:-1]
+			splits[0] = splits[0] + '\\'
+			custom_filePath = os.path.join(*splits) + '\\' + custom_script# + '.py'
+			sup_Filepaths_list.append(custom_filePath)
+
+		#remove installs not required
+		pip_requirements_list = Conda.Utils.FormatRequirements(pip_installs,pip_installs_required)
+
+		#if there are supplimentary files
+		if len(sup_Filepaths_list) > 0:
+			for sup_Filepath in sup_Filepaths_list:
+
+				new_pip_requirements_list, new_sup_Filepaths_list,_ = Conda.Gather_Requirements(sup_Filepath,env_name)
+				pip_requirements_list = pip_requirements_list + new_pip_requirements_list
+				sup_Filepaths_list = sup_Filepaths_list + new_sup_Filepaths_list
+
+		#make lists unique
+		pip_requirements_list = list(set(pip_requirements_list))
+		sup_Filepaths_list = list(set(sup_Filepaths_list))
+
+		#if pip_requirements_list has 'tensorflow'
+		#add https://storage.googleapis.com/tensorflow/linux/cpu/tensorflow-1.12.0-cp36-cp36m-linux_x86_64.whl
+
+		return pip_requirements_list, sup_Filepaths_list,run_time
+
+	class Utils:
+
+		def FormatRequirements(pip_installs: list,pip_installs_required: list):
+			"""Format requirements by verifying package was found in the installs.
+			Args:
+				pip_installs (list): List of pip packages installed in the Conda environment.
+				pip_installs_required (list): List of pip packages required for a specified function.
+			Returns:
+				list: pip_requirements_list
+			"""
+
+			pip_requirements_list = []
+			for pkg in pip_installs_required:
+
+				#see if package is in pip installs
+				pkg_requirements = np.array(pip_installs)[npe.find_contains(pkg,pip_installs)].tolist()
+
+
+				if len(pkg_requirements) != 1: #either too many or none
+
+					#check if has a different name or is actually multiple packages
+
+					pkg_aliai = Conda.confusion_exceptions[pkg]
+					if isinstance(pkg_aliai,list):
+						for alias in pkg_aliai:
+							pkg_req = np.array(pip_installs)[npe.find_contains(alias,pip_installs)].tolist()
+							if len(pkg_req) == 1:
+								pkg_requirements.append(pkg_req[0])
+							else:
+								raise ValueError('How was more than 1 package found? potentially installed multiple version of same package?')
+					else:
+						pkg_requirements = np.array(pip_installs)[npe.find_contains(pkg_aliai,pip_installs)].tolist()
+
+					a = 5
+				else: #had a single result
+
+					#is this result actually a git package?
+					try:
+						#get the repo link
+						repo_link = Conda.github_packages[pkg]
+
+						#get the version
+						version = '==' + pkg_requirements[0].split('==')[-1]
+
+						#add the specific version (DEFAULT MASTER BRANCH)
+						git_link = repo_link + '.git@master#egg=' + Conda.confusion_exceptions[pkg] + version #reponame differ from package
+
+						pkg_requirements = [git_link]
+					except Exception as ex:
+						#was not a git link
+
+						#ook so assume its a pipy and correct name
+
+						a = 5
+
+					a = 5
+
+
+				for req in pkg_requirements:
+					pip_requirements_list.append(req)
+
+			return pip_requirements_list
+
+		def call_conda(arg_list: list, abspath=True):
+			"""Call conda using a subprocess.
+			References:
+				https://github.com/conda/conda-api/blob/master/conda_api.py
+			"""
+			# call conda with the list of extra arguments, and return the tuple
+			# stdout, stderr
+			if abspath:
+				#TODO: this may not always be?
+				ROOT_PREFIX = [x for x in os.environ['PATH'].split(';') if 'conda' in x][1]
+				if sys.platform == 'win32':
+					python = os.path.join(ROOT_PREFIX, 'python.exe')
+					conda  = os.path.join(ROOT_PREFIX, 'Scripts', 'conda-script.py')
+				else:
+					python = os.path.join(ROOT_PREFIX, 'bin/python')
+					conda  = os.path.join(ROOT_PREFIX, 'bin/conda')
+				cmd_list = [python, conda]
+			else: # just use whatever conda is on the path
+				cmd_list = ['conda']
+
+			cmd_list.extend(arg_list)
+
+			pipe = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+			
+			return pipe.communicate()[0].decode()
+
 
 class Container:
 	"""Virtual container.

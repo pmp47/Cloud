@@ -1,14 +1,14 @@
 #--start requirements--
 #pip installs
 from security import Encrypting, Hashing
+from dictableobject import DictableObj
 
 #customs
-from containers import Docker, Linux
-from remotenodes import ComputeTask, ComputeCluster, Communication, HardenedNode
-from dictableobj import DictableObj
-from wasabi_service import Wasabi
-from aws_service import AWS
-from digitalocean_service import DigitalOcean
+from .containers import Docker, Linux
+from .remotenodes import ComputeTask, ComputeCluster, Communication, HardenedNode
+from .wasabi_service import Wasabi
+from .aws_service import AWS
+from .digitalocean_service import DigitalOcean
 
 #builtins
 import json
@@ -765,7 +765,6 @@ class CloudManager:
 			objects = [{'Key': obj} for obj in objectnames]
 			return Wasabi.Bucket.Empty(Wasabi(creds),bucketname,{'Objects': objects})
 
-	
 	class ServerlessFunctions:
 		"""For utilizing serverless micro computing cloud services.
 		Ref:

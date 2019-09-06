@@ -2,9 +2,9 @@
 #pip installs
 from paramiko import SSHClient, RSAKey, AutoAddPolicy
 from security import Encrypting, Hashing
+from dictableobject import UniqueStatusObject, DictableObj
 
 #customs
-from dictableobj import UniqueStatusObject, DictableObj
 
 #builtins
 import copy
